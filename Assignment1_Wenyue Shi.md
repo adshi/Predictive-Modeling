@@ -1,0 +1,461 @@
+---
+title: "Assignment1_WenyueShi"
+author: "Wenyue Shi"
+date: "August 5, 2015"
+output: word_document
+---
+
+## Set a global seed
+
+```{r}
+set.seed(1984)
+```
+
+## Exploratory analysis
+
+Load the mosaic library and import the data
+```{r}
+library(mosaic)
+vote = read.csv('../data/georgia2000.csv')
+```
+
+Take a look at the data frame by looking at the summary.
+
+```{r}
+summary(vote)
+```
+
+Calculate the undercount_percentage $$(ballots - votes) / ballots$$ and add the percentage to the original data set.
+
+```{r}
+diff = vote$ballots - vote$votes
+vote$diff <- diff
+diff_ballots = vote$diff/vote$ballots
+vote$diff_ballots = diff_ballots
+```
+
+Boxplot the percentage:
+
+```{r}
+bwplot(diff_ballots~equip, data = vote, col = "Light Blue", outline = FALSE)
+```
+
+From the boxplot, in general, different equipment of voting does not lead to higher rate of undercount.
+
+### Poor Areas
+
+But then we want to see whether different equipment does affect undercount in poor area. Select the poor observation out, where $$ poor = 1 $$ and plot the undercount percentage again with the boxplot.
+
+```{r}
+poor <- vote[vote$poor == 1, ]
+bwplot(diff_ballots~equip, data = poor)
+```
+
+Obviously, optical and punch lead to a higher level of undercount than lever and paper. To compare with non-poor areas, I did the similar thing to non-poor area.
+
+```{r}
+notpoor <- vote[vote$poor == 0, ]
+bwplot(diff_ballots~equip, data = notpoor)
+```
+
+Clearly, equipment doesn't obviously affect the undercount level, even though optical and punch still generate a little bit higher undercount.
+
+Overall, poor areas have
+
+* higher undercount_percentage than non-poor areas
+* remarkable different undercount value with different equipments
+
+### Minority Areas
+
+Now let's take a look at minority communities. Since perAA (the percentage of African American) is a quantatative feature, we'd like to run four linear regression between undercount percentaeg level and perAA under the situation of different equipments.
+
+```{r}
+lever = vote[vote$equip == 'LEVER', ]
+optical = vote[vote$equip == 'OPTICAL', ]
+paper = vote[vote$equip == 'PAPER', ]
+punch = vote[vote$equip == 'PUNCH', ]
+
+lm.lever = lm(diff_ballots~perAA, data = lever)
+summary(lm.lever)
+
+lm.optical = lm(diff_ballots~perAA, data = optical)
+summary(lm.optical)
+
+lm.punch = lm(diff_ballots~perAA, data = punch)
+summary(lm.punch)
+```
+
+For Lever equipment, perAA seems don't have a correlation with undercounts. But for optical method and punch method, the coefficients of perAA are $1.55*10^(-5)$ and 0.0826 perspectively, indicating that the more African American, the more likely to have undercount with Optical and Punch equipment.
+
+## BootStraping:
+
+Library related packages:
+
+```{r}
+library(mosaic)
+library(fImport)
+library(foreach)
+```
+
+Import the five year price from 2010-08-01 to 2015-07-31 of the following five asset class:
+
+ * US domestic equities (SPY: the S&P 500 stock index)
+ * US Treasury bonds (TLT)
+ * Investment-grade corporate bonds (LQD)
+ * Emerging-market equities (EEM)
+ * Real estate (VNQ)
+
+Take a look at the first five rows.
+
+```{r}
+mystocks = c("SPY", "TLT", "LQD", "EEM", "VNQ")
+myprices = yahooSeries(mystocks, from='2010-08-01', to='2015-07-30')
+head(myprices, 5)
+```
+
+Since we are going to simulate a short-term (4 weeks) return, we would like to know the day to day return of five stocks using their close price. The following function calculate the $$(P_t - P_{t-1})/P_{t-1}$$
+
+```{r}
+YahooPricesToReturns = function(series) {
+  mycols = grep('Adj.Close', colnames(series))
+  closingprice = series[,mycols]
+  N = nrow(closingprice)
+  percentreturn = as.data.frame(closingprice[2:N,]) / as.data.frame(closingprice[1:(N-1),]) - 1
+  mynames = strsplit(colnames(percentreturn), '.', fixed=TRUE)
+  mynames = lapply(mynames, function(x) return(paste0(x[1], ".PctReturn")))
+  colnames(percentreturn) = mynames
+  as.matrix(na.omit(percentreturn))
+}
+```
+
+Use the function to get the day to day returns of the five portfolio we selected. 
+Plot the correlation between each pairs of the five assets and print out the standard deviation of their day-to-day returns of each assets.
+
+```{r}
+myreturns = YahooPricesToReturns(myprices)
+pairs(myreturns)
+apply(myreturns, 2, sd)
+```
+
+From the plot of the returns, we can figure out the following fact:
+
+* returns on SPY, EEM and VNQ are positively correlated
+* returns on SPY and TLT are negatively correlated
+* returns on TLT and LQD are positively correlated
+* returns on LQD has no obviouse correlation with SPY, EEM and VNQ
+
+From the standard deviation of the returns, we can see that:
+
+* EEM is the most risky assets, followed by VNQ
+* LQD is the least risky assets
+
+### Evenly Split Portfolio
+
+Simulation on evenly split portfolio, with weights being 0.2, 0.2, 0.2, 0.2, 0.2
+
+```{r}
+sim1 = foreach(i = 1:5000, .combine = 'cbind')%do% {
+  total_wealth = 100000
+  weights = c(0.2, 0.2, 0.2, 0.2, 0.2)
+  holdings = total_wealth * weights
+  n_days = 20
+  wealthtracker = rep(0, 20)
+  for (today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids = FALSE)
+    holdings = holdings + holdings * return.today
+    total_wealth = sum(holdings)
+    wealthtracker[today] = total_wealth
+  }
+  wealthtracker
+}
+
+hist(sim1, 70, col = "Light Blue")
+
+risk1 = quantile(sim1, 0.05) - 100000
+risk1
+```
+
+### A Safer Portfolio
+
+Based on the above analysis of standard deviation and correlation, a safer portfolio than evenly split will be the one with SPY, TLT and LQD, because SPY and TLT have a comparative level of risk but negatively correlated, and LQD is the safest assets among all of the assets.
+
+The following is the simulation of a safer portfilio with weights being 0.3, 0.3, 0.4, 0, 0
+
+```{r}
+sim2 = foreach(i = 1:5000, .combine = 'cbind')%do% {
+  total_wealth = 100000
+  weights = c(0.3, 0.3, 0.4, 0, 0)
+  holdings = total_wealth * weights
+  n_days = 20
+  wealthtracker = rep(0, 20)
+  for (today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids = FALSE)
+    holdings = holdings + holdings * return.today
+    total_wealth = sum(holdings)
+    wealthtracker[today] = total_wealth
+  }
+  wealthtracker
+}
+hist(sim2, 60, col = "Light Blue")
+risk2 = quantile(sim2, 0.05) - 100000
+risk2
+```
+
+### A More Aggressive Portfolio
+
+Similarly, a more regressive portfolio than the evenly split one would include EEM, VNQ and SPY, since they are not only positively correlated to each other but also have relatively high risk.
+
+The simulation is the following:
+
+```{r}
+sim3 = foreach(i = 1:5000, .combine = 'cbind')%do% {
+  total_wealth = 100000
+  weights = c(0.2, 0, 0, 0.6, 0.2)
+  holdings = total_wealth * weights
+  n_days = 20
+  wealthtracker = rep(0, 20)
+  for (today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids = FALSE)
+    holdings = holdings + holdings * return.today
+    total_wealth = sum(holdings)
+    wealthtracker[today] = total_wealth
+  }
+  wealthtracker
+}
+hist(sim3, 60, col = "Light Blue")
+
+risk3 = quantile(sim3, 0.05) - 100000
+risk3
+```
+
+Now we have three options:
+
+* The even split
+    + 20% of your assets in each of the ETFs
+    + The risk at 5% level is `r round(risk1, 2)`.
+* The safer option
+    + 30% of your assets in SPY, 30% of you assets in TLT and the last 40% in LQD
+    + The risk at 5% level is `r round(risk2, 2)`.
+* The more aggresive option
+    + 20% of you assets in SPY, 20% of you assets in VNQ and the rest 60% in EEM
+    + The risk at 5% level is `r round(risk3, 2)`.
+
+## Clustering and PCA
+
+Load the library and the data.
+
+```{r}
+library(caret)
+library(ggplot2)
+library(cclust)
+wines = read.csv('../data/wine.csv')
+```
+
+Summarize the data to see the columns. 
+Remove the last two columns which are quality and color, since we are only clustering with the first 11 features. 
+Scale the wine data.
+
+```{r}
+wine = wines[, c(-12, -13)]
+wine_scaled <- scale(wine, center = TRUE, scale = TRUE)
+```
+
+### k-means clustering
+
+Since we know that we want two clusters seperating red and white wine, let's start with kmeans with 2 centers. 
+
+```{r}
+wine_kmean <- kmeans(wine_scaled, centers=2, nstart = 50)
+type = ifelse(wine_kmean$cluster == 1, "white", "red")
+qplot(wines$fixed.acidity, wines$volatile.acidity, col = type, xlab = "fixed.acidity", ylab = "volatile.acidity", alpha = I(0.5))
+```
+
+The first plot shows the red wine tend to have lower level of both volatile acidity and fixed acidity. But it is unclear whether the red dots are truly red wine.
+
+```{r}
+qplot(wines$fixed.acidity, wines$color, col = type, xlab = "fixed.acidity", ylab = "colors")
+```
+
+This plot indicates the true classification of red and white wine in the y-axis, with the dots color representing the clustering result. Clearly, kmeans did a good job in clustering the color of the wine. Most red dots fall into the true red wine category, and most green dots fall into the true white wine category. 
+
+A confusion matrix can show us the accuracy of the classification.
+
+```{r}
+confusionMatrix(type, wines$color)
+```
+
+Of all the 1599 kinds of red wine, 24 of them were clustered to white wine. The accuracy of classifying red wine is around 98.5%. Of 4898 kinds of white wine, 68 of them are misclassified by kmeans, and the accuracy is 98.61%.
+
+However, can they tell the difference between different wine quality? Let's split the data frame into two subset by their colors.
+
+```{r}
+red = wines[wines$color == "red", ]
+white = wines[wines$color == "white", ]
+red_scaled = scale(red[, c(-12, -13)], center = TRUE, scale = TRUE)
+white_scaled = scale(white[, c(-12, -13)], center = TRUE, scale = TRUE)
+```
+
+Try kmeans on each subset to see whether kmeans can rank them.
+
+```{r}
+red_kmean <- kmeans(red_scaled, centers = 7, nstart = 100)
+qplot(red$fixed.acidity, red$quality, col = red_kmean$cluster, xlab = "fixed.acidity", ylab = "quality")
+```
+
+From the plot, we cannot see a clearly clustering by ranks. Try the same with white wine.
+
+```{r}
+white_kmean <- kmeans(white_scaled, centers = 4, nstart = 100)
+qplot(white$fixed.acidity, white$quality, col = white_kmean$cluster, xlab = "fixed.acidity", ylab = "quality")
+```
+
+We still cannot tell the difference between each cluster in terms of their quality. It seems their quality are not determined by these 11 features.
+
+## Principal Component Analysis
+
+Apply PCA to the scaled wine data. Get the component vectors and the projection position on those vectors, named as scores.
+
+```{r}
+wine_pca <- prcomp(wine_scaled)
+loadings = wine_pca$rotation
+scores = wine_pca$x
+```
+
+Plot the red and white wine with x being the first component and y being the second component.
+
+```{r}
+qplot(scores[,1], scores[,2], color=wines$color, xlab='Component 1', ylab='Component 2', alpha = I(0.6))
+```
+
+Clearly, most kinds of wine, including both red and white, fall into the range of [-5, 5] in temrs of component 2. On the contrary, component 1 can seperate the two kinds of wine into two category. That is to say, component 1 itself is interesting enough in terms of telling the difference between wine color, while component 2 is does not provide much extra information. Since component 2 is not interesting to us, there's no need to consider the rest components.
+
+However, PCA doesn't seem work well when we want to know the scores of the wine. Let's take a look at the plot with color representing different scores.
+
+```{r}
+qplot(scores[, 1], scores[, 2], color = wines$quality, xlab = "Component1", ylab = "Component 2", alpha = I(0.5))
+```
+
+Even component 1 and component 2 together are not enough to order the quality of these wine. 
+
+```{r}
+vars <- (wine_pca$sdev)^2
+sum <- sum(vars)
+percent <- vars/sum
+par(mfrow = c(1, 2))
+plot(percent, xlab = "Principal Components", ylab = "Proportion of variance explained", cex = 0.7, pch = 15, col = 9)
+plot(cumsum(percent), xlab = "Principal Components", ylab = "Cumulative proportion of variance explained", cex = 0.7, pch = 15, col = 9)
+par(mfrow = c(1, 1))
+```
+
+The above two graph showed that the first two components explaine nearly 38% of the variance, and we need more components to rank the wine. 
+
+In conclusion, PCA works well in distinguishing red and white wine, but not in ranking the quality. 
+
+## Market Segmentation
+
+Load the library and the data. Take a look at the first row of the data set.
+
+```{r}
+library(cluster)
+market <- read.csv("../data/social_marketing.csv")
+head(market, 1)
+```
+
+We don't want the first column, "spam" column, "chatter" column and "uncategorized" column which does't provide interesting information about the user. So delete these columns.
+
+Scale the data because some of the topic might be tweeted more often than others.
+
+```{r}
+markets = market[, -1]
+markets = markets[, -which(names(markets)=="spam")]
+markets = markets[, -which(names(markets) == "chatter")]
+markets = markets[, -which(names(markets) == "uncategorized")]
+market_scaled <- scale(markets, center = TRUE, scale = TRUE)
+```
+
+Apply kmeans to the scaled data frame.
+
+```{r}
+center_num = 8
+segments <- kmeans(market_scaled, centers =  center_num, nstart = 100)
+```
+
+Take a look at the clustering centers.
+
+```{r}
+segments$centers
+```
+
+Unscale the data and get mu and sigma.
+
+```{r}
+mu = attr(market_scaled,"scaled:center")
+sigma = attr(market_scaled,"scaled:scale")
+segments_unscaled = segments$centers * sigma + mu
+```
+
+### First Cluster
+
+```{r}
+rbind(segments$centers[1, ], segments_unscaled[1, ])
+```
+
+Clearly, people who fall into the first cluster loves to tweet about online games, college unions, and sports playing. They are more likely to be male students in college who love games and sports.
+
+### Second Cluster
+
+```{r}
+rbind(segments$centers[2, ], segments_unscaled[2, ])
+```
+
+People in the second cluster loves to talk about food, sports_fandon, family
+, crafts, religious, parenting and schooling. They seems to be father with one or two children.
+
+### Third Cluster
+
+```{r}
+rbind(segments$centers[3, ], segments_unscaled[3, ])
+```
+
+People in the third cluster love to tweet things about travelling, poiltics, news, computers. They seems to be professionals who have to travel a lot.
+
+### Forth Cluster
+
+```{r}
+rbind(segments$centers[4, ], segments_unscaled[4, ])
+```
+
+People in this cluster like photo sharing, cooking, shopping, beauty things and fashion. Clearly, they are more likely to be young ladies.
+
+### Fifth Cluster
+
+```{r}
+rbind(segments$centers[5, ], segments_unscaled[5, ])
+```
+
+This group like to talk about home and gardening, health and nutrition, eco-friendly, 
+outdoor activities and personal fitness. They care about health and environment!
+
+### Sixth Cluster
+
+```{r}
+rbind(segments$centers[6, ], segments_unscaled[6, ])
+```
+
+People from this group love to talk about current events, tv and film, about music, about art and small business. These people are those fantastic artists, musicians, movie makers!
+
+### Seventh Cluster
+
+```{r}
+rbind(segments$centers[7, ], segments_unscaled[7, ])
+```
+
+People from this group usually talk about news and automotives. These people probably care more about cars news.
+
+### Eighth Cluster
+
+```{r}
+rbind(segments$centers[8, ], segments_unscaled[8, ])
+```
+
+Well, these people don't tweet a lot. But when they tweet, they tweet about adult things. And they seems to have little interest in other topics. So, they are probaly single males.
