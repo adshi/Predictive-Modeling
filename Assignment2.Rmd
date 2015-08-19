@@ -278,7 +278,102 @@ good/(n/2)
 
 From the accuracy, we can see that there isn't much difference between the accuracy of the two model. However, considering that PCA reduce the number of features used, I will go with PCA and random forest.
 
-We would like to know whether some authors are easier to predict while others are not. Let's see the accuracy for each authors.
+## Topic Models and Random Forest
+Topic Models is another way to reduce features and it can greatly reduce a large number of features to several topics. Let's see how well it works.
+
+Select the K with topic model function.
+
+```{r}
+library(maptpx)
+DTM_train = DTM[1:(n/2), ]
+DTM_test = DTM[((n/2)+1):n, ]
+tm_select = topics(DTM_train, K=c(10:30))
+tm_select$K
+```
+
+The best number of topics is 15.
+
+```{r}
+tm_selected = topics(DTM_train, K = 15)
+pred = predict.topics(tm_selected, DTM_test)
+```
+
+Preprocess the train dataset for random forest with omega.
+
+```{r}
+omega = tm_selected$omega
+omega_frame = as.data.frame(omega)
+omega_frame$authors = labels_train
+omega_frame$authors = as.factor(omega_frame$authors)
+names(omega_frame) = c('topic1', 
+                       'topic2', 
+                       'topic3', 
+                       'topic4', 
+                       'topic5', 
+                       'topic6', 
+                       'topic7', 
+                       'topic8', 
+                       'topic9', 
+                       'topic10', 
+                       'topic11', 
+                       'topic12', 
+                       'topic13', 
+                       'topic14', 
+                       'topic15', 
+                       'authors')
+```
+
+Fit the topics to random forest and get the predictions.
+
+```{r}
+rf1 = randomForest(authors~., data = omega_frame, importance = TRUE, ntrees = 200, mtry = 3)
+pred_frame = as.data.frame(pred)
+names(pred_frame) = c('topic1', 
+                      'topic2', 
+                      'topic3', 
+                      'topic4', 
+                      'topic5', 
+                      'topic6', 
+                      'topic7', 
+                      'topic8', 
+                      'topic9', 
+                      'topic10', 
+                      'topic11', 
+                      'topic12', 
+                      'topic13', 
+                      'topic14', 
+                      'topic15')
+prediction = predict(rf1, pred_frame, type = 'response')
+good = 0
+labels_test[1] == prediction[1]
+prediction[1]
+for (i in seq(1, (n/2))) {
+  if (labels_test[i] == prediction[i]) {
+    good = good + 1
+  }
+}
+good
+good/2500
+
+```
+
+The accuracy is only near 40%, which is far worse than PCA and Random Forest. So in conclusion, we would choose PCA and random forest.
+
+Lastly, let's take a look at how random forest perform on the all terms.
+
+```{r}
+library(caret)
+train = X[1:(n/2), ]
+test = X[((n/2)+1):n, ]
+rf_all = randomForest(x = train, y = as.factor(labels_train), ntrees = 200, mtry = 37)
+prediction_rf = predict(rf_all, newdata = test)
+confusion = confusionMatrix(prediction_rf, labels_test)
+confusion$overall
+```
+
+Clearly, random forest with the original features give out a better result. But the overall result is not good for all the models here. The reason is probably because I combine the test and train documents together at the beginning and did the word processing to them together. Treating them differently will probably give a better result.
+
+We would like to know whether some authors are easier to predict while others are not. Let's see the accuracy for each authors with the PCA and random forest model which has the highest accuracy.
 
 ```{r}
 pred_table = table(labels_test, prediction_pca)

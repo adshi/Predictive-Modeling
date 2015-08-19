@@ -558,12 +558,213 @@ good/(n/2)
 ```
 
 ```
-## [1] 0.55
+## [1] 0.554
 ```
 
 From the accuracy, we can see that there isn't much difference between the accuracy of the two model. However, considering that PCA reduce the number of features used, I will go with PCA and random forest.
 
-We would like to know whether some authors are easier to predict while others are not. Let's see the accuracy for each authors.
+## Topic Models and Random Forest
+Topic Models is another way to reduce features and it can greatly reduce a large number of features to several topics. Let's see how well it works.
+
+Select the K with topic model function.
+
+
+```r
+library(maptpx)
+```
+
+```
+## Loading required package: slam
+## 
+## Attaching package: 'maptpx'
+## 
+## The following object is masked from 'package:mosaic':
+## 
+##     logit
+## 
+## The following object is masked from 'package:car':
+## 
+##     logit
+```
+
+```r
+DTM_train = DTM[1:(n/2), ]
+DTM_test = DTM[((n/2)+1):n, ]
+tm_select = topics(DTM_train, K=c(10:30))
+```
+
+```
+## 
+## Estimating on a 2500 document collection.
+## Fit and Bayes Factor Estimation for K = 10 ... 30
+## log posterior increase: 6788.3, 3610.3, 1491.9, 822.9, 520.4, 333.8, 288.1, done.
+## log BF( 10 ) = 194625.77
+## log posterior increase: 4404.6, 182.7, done.
+## log BF( 11 ) = 216274.6
+## log posterior increase: 2954.6, 136.4, done.
+## log BF( 12 ) = 224069.87
+## log posterior increase: 2140.2, 284.8, 109.5, done.
+## log BF( 13 ) = 228133.22
+## log posterior increase: 2599, 145.1, done.
+## log BF( 14 ) = 237057.47
+## log posterior increase: 2216.2, 132.4, done.
+## log BF( 15 ) = 240314.77
+## log posterior increase: 1932, 136.2, 141, done.
+## log BF( 16 ) = 235642.71
+## log posterior increase: 1984.6, 131.8, 86.6, 82.1, done.
+## log BF( 17 ) = 233581.43
+```
+
+```r
+tm_select$K
+```
+
+```
+## [1] 15
+```
+
+The best number of topics is 15.
+
+
+```r
+tm_selected = topics(DTM_train, K = 15)
+```
+
+```
+## 
+## Estimating on a 2500 document collection.
+## Fitting the 15 topic model.
+## log posterior increase: 10252.8, 4214.8, 2077.1, 1115.7, 659.6, 358.2, 321, 165.6, done.
+```
+
+```r
+pred = predict.topics(tm_selected, DTM_test)
+```
+
+Preprocess the train dataset for random forest with omega.
+
+
+```r
+omega = tm_selected$omega
+omega_frame = as.data.frame(omega)
+omega_frame$authors = labels_train
+omega_frame$authors = as.factor(omega_frame$authors)
+names(omega_frame) = c('topic1', 
+                       'topic2', 
+                       'topic3', 
+                       'topic4', 
+                       'topic5', 
+                       'topic6', 
+                       'topic7', 
+                       'topic8', 
+                       'topic9', 
+                       'topic10', 
+                       'topic11', 
+                       'topic12', 
+                       'topic13', 
+                       'topic14', 
+                       'topic15', 
+                       'authors')
+```
+
+Fit the topics to random forest and get the predictions.
+
+
+```r
+rf1 = randomForest(authors~., data = omega_frame, importance = TRUE, ntrees = 200, mtry = 3)
+pred_frame = as.data.frame(pred)
+names(pred_frame) = c('topic1', 
+                      'topic2', 
+                      'topic3', 
+                      'topic4', 
+                      'topic5', 
+                      'topic6', 
+                      'topic7', 
+                      'topic8', 
+                      'topic9', 
+                      'topic10', 
+                      'topic11', 
+                      'topic12', 
+                      'topic13', 
+                      'topic14', 
+                      'topic15')
+prediction = predict(rf1, pred_frame, type = 'response')
+good = 0
+labels_test[1] == prediction[1]
+```
+
+```
+## [1] FALSE
+```
+
+```r
+prediction[1]
+```
+
+```
+##              1 
+## AlexanderSmith 
+## 50 Levels: AaronPressman AlanCrosby AlexanderSmith ... WilliamKazer
+```
+
+```r
+for (i in seq(1, (n/2))) {
+  if (labels_test[i] == prediction[i]) {
+    good = good + 1
+  }
+}
+good
+```
+
+```
+## [1] 980
+```
+
+```r
+good/2500
+```
+
+```
+## [1] 0.392
+```
+
+The accuracy is only near 40%, which is far worse than PCA and Random Forest. So in conclusion, we would choose PCA and random forest.
+
+Lastly, let's take a look at how random forest perform on the all terms.
+
+
+```r
+library(caret)
+```
+
+```
+## 
+## Attaching package: 'caret'
+## 
+## The following object is masked from 'package:mosaic':
+## 
+##     dotPlot
+```
+
+```r
+train = X[1:(n/2), ]
+test = X[((n/2)+1):n, ]
+rf_all = randomForest(x = train, y = as.factor(labels_train), ntrees = 200, mtry = 37)
+prediction_rf = predict(rf_all, newdata = test)
+confusion = confusionMatrix(prediction_rf, labels_test)
+confusion$overall
+```
+
+```
+##       Accuracy          Kappa  AccuracyLower  AccuracyUpper   AccuracyNull 
+##      0.6260000      0.6183673      0.6066942      0.6450102      0.0200000 
+## AccuracyPValue  McnemarPValue 
+##      0.0000000            NaN
+```
+
+Clearly, random forest with the original features give out a better result. But the overall result is not good for all the models here. The reason is probably because I combine the test and train documents together at the beginning and did the word processing to them together. Treating them differently will probably give a better result.
+
+We would like to know whether some authors are easier to predict while others are not. Let's see the accuracy for each authors with the PCA and random forest model which has the highest accuracy.
 
 
 ```r
@@ -575,31 +776,31 @@ pred_prob
 
 ```
 ##     AaronPressman        AlanCrosby    AlexanderSmith   BenjaminKangLim 
-##              0.90              0.42              0.50              0.38 
+##              0.86              0.44              0.54              0.32 
 ##     BernardHickey       BradDorfman  DarrenSchuettler       DavidLawder 
-##              0.62              0.62              0.62              0.58 
+##              0.44              0.64              0.60              0.54 
 ##     EdnaFernandes       EricAuchard    FumikoFujisaki    GrahamEarnshaw 
-##              0.34              0.26              0.80              0.82 
+##              0.36              0.26              0.82              0.82 
 ##  HeatherScoffield     JaneMacartney        JanLopatka      JimGilchrist 
-##              0.38              0.28              0.54              0.98 
+##              0.38              0.28              0.56              0.98 
 ##          JoeOrtiz      JohnMastrini      JonathanBirt    JoWinterbottom 
-##              0.54              0.38              0.68              0.70 
+##              0.50              0.38              0.78              0.66 
 ##       KarlPenhaul         KeithWeir    KevinDrawbaugh     KevinMorrison 
-##              0.80              0.74              0.62              0.42 
+##              0.80              0.76              0.60              0.40 
 ##     KirstinRidley KouroshKarimkhany         LydiaZajc    LynneO'Donnell 
-##              0.60              0.68              0.62              0.76 
+##              0.64              0.72              0.62              0.76 
 ##   LynnleyBrowning   MarcelMichelson      MarkBendeich        MartinWolk 
-##              0.96              0.70              0.50              0.32 
+##              0.92              0.70              0.54              0.30 
 ##      MatthewBunce     MichaelConnor        MureDickie         NickLouth 
-##              0.86              0.66              0.30              0.68 
+##              0.86              0.68              0.30              0.66 
 ##   PatriciaCommins     PeterHumphrey        PierreTran        RobinSidel 
-##              0.42              0.68              0.46              0.90 
+##              0.50              0.74              0.50              0.88 
 ##      RogerFillion       SamuelPerry      SarahDavison       ScottHillis 
-##              0.76              0.60              0.42              0.30 
+##              0.72              0.54              0.42              0.26 
 ##       SimonCowell          TanEeLyn    TheresePoletti        TimFarrand 
-##              0.42              0.38              0.54              0.64 
+##              0.38              0.38              0.58              0.76 
 ##        ToddNissen      WilliamKazer 
-##              0.44              0.26
+##              0.46              0.24
 ```
 
 If the author has a accuracy queal to or greater than 0.6, we would say he is a predictable author. Let's take a look at the predictable ones.
@@ -610,15 +811,14 @@ names(which(pred_prob >= 0.6))
 ```
 
 ```
-##  [1] "AaronPressman"     "BernardHickey"     "BradDorfman"      
-##  [4] "DarrenSchuettler"  "FumikoFujisaki"    "GrahamEarnshaw"   
-##  [7] "JimGilchrist"      "JonathanBirt"      "JoWinterbottom"   
-## [10] "KarlPenhaul"       "KeithWeir"         "KevinDrawbaugh"   
-## [13] "KirstinRidley"     "KouroshKarimkhany" "LydiaZajc"        
-## [16] "LynneO'Donnell"    "LynnleyBrowning"   "MarcelMichelson"  
-## [19] "MatthewBunce"      "MichaelConnor"     "NickLouth"        
-## [22] "PeterHumphrey"     "RobinSidel"        "RogerFillion"     
-## [25] "SamuelPerry"       "TimFarrand"
+##  [1] "AaronPressman"     "BradDorfman"       "DarrenSchuettler" 
+##  [4] "FumikoFujisaki"    "GrahamEarnshaw"    "JimGilchrist"     
+##  [7] "JonathanBirt"      "JoWinterbottom"    "KarlPenhaul"      
+## [10] "KeithWeir"         "KevinDrawbaugh"    "KirstinRidley"    
+## [13] "KouroshKarimkhany" "LydiaZajc"         "LynneO'Donnell"   
+## [16] "LynnleyBrowning"   "MarcelMichelson"   "MatthewBunce"     
+## [19] "MichaelConnor"     "NickLouth"         "PeterHumphrey"    
+## [22] "RobinSidel"        "RogerFillion"      "TimFarrand"
 ```
 
 So these 26 authors have recognizable writing pattern while the others have more diverse writing patterns.
