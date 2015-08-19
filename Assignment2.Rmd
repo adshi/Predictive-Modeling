@@ -1,0 +1,324 @@
+---
+title: "Assignment2_WenyueShi"
+author: "Wenyue Shi"
+date: "August 15, 2015"
+output:  
+     html_document:  
+       keep_md: true
+
+---
+
+# Problem 1: Airplane Delay
+Load the library and read in the data. Source multiplot function
+
+```{r}
+library(mosaic)
+library(ggplot2)
+plane = read.csv('../data/ABIA.csv')
+```
+
+Summary the data. 
+
+```{r}
+summary(plane)
+```
+
+Notice many features should be factors but they are treated as numeric. Change them to factors.
+
+```{r}
+plane$Year = as.factor(plane$Year)
+plane$Month = as.factor(plane$Month)
+plane$DayofMonth = as.factor(plane$DayofMonth)
+plane$DayOfWeek = as.factor(plane$DayOfWeek)
+plane$Cancelled = as.factor(plane$Cancelled)
+plane$CancellationCode = as.factor(plane$CancellationCode)
+plane$UniqueCarrier = as.factor(plane$UniqueCarrier)
+summary(plane)
+```
+
+### Question to Answer: What's the best time of the day to fly to minimize delays?
+
+Cut the scheduled arrival/departure time into 24 hours.
+
+```{r}
+sch_dep_time_cut = cut(plane$CRSDepTime, 24, labels = c('12-1', '1-2', '2-3', '3-4', '4-5', '5-6', '6-7', '7-8', '8-9', '9-10', '10-11', '11-12', '12-13', '13-14', '14-15', '15-16', '16-17', '17-18', '18-19', '19-20', '20-21', '21-22', '22-23', '23-24'))
+sch_arr_time_cut = cut(plane$CRSArrTime, 24, labels = c('12-1', '1-2', '2-3', '3-4', '4-5', '5-6', '6-7', '7-8', '8-9', '9-10', '10-11', '11-12', '12-13', '13-14', '14-15', '15-16', '16-17', '17-18', '18-19', '19-20', '20-21', '21-22', '22-23', '23-24'))
+```
+
+Aggregate the departure delay by the scheduled departure time.
+
+```{r}
+# Aggregate by scheduled departure time
+aggregate_sch_depdelay = aggregate(plane$DepDelay, by = list(sch_dep_time_cut), FUN = mean, na.rm = TRUE)
+aggregate_sch_depdelay = as.data.frame(aggregate_sch_depdelay)
+aggregate_sch_depdelay$Time = c(0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+
+g <- ggplot(aggregate_sch_depdelay, aes(Time, x))+geom_point(color="red")+geom_line(color = 'grey')
+g <- g + scale_x_continuous(breaks=0:23)
+g <- g+ggtitle('Average departure delay by time')
+g <- g+theme(plot.title = element_text(size=20, face="bold", vjust=2))
+g <- g+labs(x="Hour", y=expression(paste("Average Departure Delay Time")))
+g <- g + theme(axis.text.x=element_text(angle=50, size=10, vjust=0.5))
+g
+
+```
+
+Apparently, if you want to minimize the departure delay time, the best time to take off is 6 am.
+Get average arrival delay time aggregated by the scheduled arrival time.
+
+```{r}
+aggregate_sch_arrdelay = aggregate(plane$ArrDelay, by = list(sch_arr_time_cut), FUN = mean, na.rm = TRUE)
+aggregate_sch_arrdelay$Time = seq(0, 23)
+
+
+addlinetoplot <- function(dataset, varx, vary) { 
+  list(
+    geom_line(data=dataset, aes_string(x=varx, y=vary)), 
+    geom_point(data=dataset, aes_string(x=varx, y=vary))
+  )
+}
+p <- ggplot(aggregate_sch_arrdelay, aes(Time, x))+geom_point(color="blue")+geom_line(color = 'grey')
+p <- p + scale_x_continuous(breaks=0:23)
+p <- p+ggtitle('Average arrival delay by time')
+p <- p+theme(plot.title = element_text(size=20, face="bold", vjust=2))
+p <- p+labs(x="Hour", y=expression(paste("Average Arrival Delay Time")))
+p <- p + theme(axis.text.x=element_text(angle=50, size=10, vjust=0.5))
+p
+
+```
+
+We can see a similar pattern here with the arrival delay time. 
+Again, the best time to take plane is from 6 am to 8 am.
+
+# Problem 2: Author Attribution
+Load in the libraries.
+
+```{r}
+library(tm)
+library(randomForest)
+```
+
+Source in the reader rapper function.
+
+```{r}
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+```
+
+Rolling all train and test directories into a single corpus.
+
+```{r}
+author_train = Sys.glob('../data/ReutersC50/C50train/*')
+author_test = Sys.glob('../data/ReutersC50/C50tests/*')
+author_dirs = c(author_train, author_test)
+```
+
+Get the name of the files and the author names.
+
+```{r}
+file_list = NULL
+labels = NULL
+train_or_not = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=29)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  labels = append(labels, rep(author_name, length(files_to_add)))
+}
+head(file_list)
+n = length(file_list)
+labels_train = labels[1:(n/2)]
+labels_test = labels[((n/2)+1):n]
+authors = levels(as.factor(labels_train))
+head(authors)
+```
+
+Read in the documents and rename each of them.
+
+```{r}
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = file_list
+```
+
+Preprocess the corpus to remove all numbers, punctuations, excess white-space, and stop-words. Turn everything into lowercase.
+
+```{r}
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+```
+
+Take a look at the summary of the Document Term Matrix of the corpus. Notice we have a really high sparcity. 
+
+```{r}
+DTM = DocumentTermMatrix(my_corpus)
+DTM 
+```
+
+Remove the terms that didn't show in 97.5% of all the documents. The sparcity got reduced to 93%.
+
+```{r}
+DTM = removeSparseTerms(DTM, 0.975)
+DTM
+```
+
+## Naive Bayes
+Now fit the DTM to a naive bayes model. First, change the DTM to matrix form and seperate the train and test data sets.
+
+```{r}
+X = as.matrix(DTM)
+train = X[1:(n/2), ]
+test = X[((n/2)+1):n, ]
+```
+
+Get the w for each author, the rows being each words and the columns being each authors.
+
+```{r}
+i = 0
+w = NULL
+smooth_count = 1/50
+for (author in authors) {
+  cat(i)
+  col = NULL
+  train = X[((i*50)+1):((i*50)+50),]
+  col = colSums(train + smooth_count)
+  names(col) = colnames(train)
+  temp = col/sum(col)
+  w = cbind(w,temp)
+  i = i+1
+}
+colnames(w) = authors
+```
+
+Fit the naive bayes model to the test dataset. The printed six line is the first 6 predicted author names.
+
+```{r}
+fit = matrix(nrow = 2500, ncol = 50)
+
+for (i in seq(1:2500)) {
+  for (j in seq(1, 50)) {
+    fit[i, j] = sum(test[i, ] * log(w[, j]))
+  }
+}
+
+colnames(fit) = authors
+labels_fit = apply(fit, 1, which.max)
+author_fit = authors[labels_fit]
+head(author_fit)
+```
+
+Calculate the accuracy of the model.
+
+```{r}
+compare = cbind(author_fit, labels_test)
+dim(compare)
+head(compare)
+good_naive_bayes = 0
+for (i in seq(1, dim(compare)[1])) {
+  if (compare[i, 1] == compare[i, 2]) {
+    good_naive_bayes = good_naive_bayes + 1
+  }
+}
+
+accurate_rate = good_naive_bayes / (n/2)
+accurate_rate
+```
+
+## Use PCA and random forest model
+First, apply PCA to the scaled train data set. Plot the explained variance by each components.
+
+```{r}
+X = as.matrix(DTM)
+train = X[1:2500, ]
+test = X[2501:5000, ]
+
+pca = prcomp(train, scale=TRUE)
+plot(pca) 
+```
+
+Get the score from the test data set.
+
+```{r}
+test.p <- predict(pca, newdata = test)
+```
+
+Select the first 100 components for supervised random forest.
+
+```{r}
+train.new <- pca$x[, 1:100]
+train.new = as.data.frame(train.new)
+train.new$authors = as.factor(labels_train)
+```
+
+Fit the random forest model.
+
+```{r}
+rf_pca = randomForest(authors~., data = train.new, importance = TRUE, ntrees = 200, mtry = 10)
+```
+
+Predict the authors for the test data sets and calculate the accuracy.
+
+```{r}
+prediction_pca = predict(rf_pca, test.p, type = 'response')
+good = 0
+for (i in seq(1, (n/2))) {
+  if (labels_test[i] == prediction_pca[i]) {
+    good = good + 1
+  }
+}
+good/(n/2)
+```
+
+From the accuracy, we can see that there isn't much difference between the accuracy of the two model. However, considering that PCA reduce the number of features used, I will go with PCA and random forest.
+
+We would like to know whether some authors are easier to predict while others are not. Let's see the accuracy for each authors.
+
+```{r}
+pred_table = table(labels_test, prediction_pca)
+pred_max = apply(pred_table, 1, max)
+pred_prob = pred_max/50
+pred_prob
+```
+
+If the author has a accuracy queal to or greater than 0.6, we would say he is a predictable author. Let's take a look at the predictable ones.
+
+```{r}
+names(which(pred_prob >= 0.6))
+```
+
+So these 26 authors have recognizable writing pattern while the others have more diverse writing patterns.
+
+# Problem 3: Associate Rule Mining
+Load in the library and read in the data.
+
+```{r}
+library(arules)
+grocery = read.transactions('../data/groceries.txt', sep = ',', format = 'basket', rm.duplicates = 1)
+```
+
+Take a look at the summary of the grocery data set.
+
+```{r}
+head(grocery)
+```
+
+Now run the 'apriori' algorithm.
+
+Look at rules with support > .01 & confidence >.5 & length (# artists) <= 4.
+
+```{r}
+groceryrules <- apriori(grocery, 
+	parameter=list(support=.01, confidence=.5, maxlen=3))
+inspect(groceryrules)
+```
+
+The result is not very interesting actually. All we have are whole milk and other vegetables. But that's not surprising, because most people drink milk and eat vegetables everyday.
+
+
